@@ -1,16 +1,22 @@
 ''' Import Libraries '''
-import pytz
+
+## For Speech Recognition
 import speech_recognition as sr
+import pytz
+from google.cloud import texttospeech
 import os
+from gtts import gTTS
+import pyttsx3
+import playsound
+import subprocess
+
+''' For NLTK Dependency Tree '''
 import spacy
-import nltk
-from nltk import Tree
 from spacy import displacy
 from spacy.symbols import NOUN, NUM
-from google.cloud import texttospeech
-from gtts import gTTS
-import pyttsx3 as pyt
-import playsound
+
+import nltk
+from nltk import word_tokenize, sent_tokenize
 
 ''' For Google Calendar '''
 import datetime
@@ -24,6 +30,8 @@ DAYS = ["monday", "tuesday", "wednesday","thursday","friday","saturday","sunday"
 MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
 DAY_EXTENTIONS = ["rd","th","st"]
 
+ALLDAYSANDMONTHS = DAYS + MONTHS
+
 ''' See Versions '''
 print(sr.__version__)
 print(spacy.__version__)
@@ -32,41 +40,30 @@ print(nltk.__version__)
 ''' Next Steps '''
 
 # If modifying these scopes, delete the file token.pickle.
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-
-def texttospeechwithpyttsx3():
-    engine = pyt.init()
-    engine.setProperty("rate", 150)
-    engine.setProperty("volume", 1.0)
-    # voices = engine.setProperty("voices")
-    # engine.setProperty("voice", voices[1].id)
-
-    welcome = "Hello. How may I help you?"
-    engine.say(welcome)
-    engine.runAndWait()
-
-texttospeechwithpyttsx3()
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def speak(text):
-    tts = gTTS(text=text, lang="en")
-    filename = "voice.mp3"
-    tts.save(filename)
-    playsound.playsound(filename)
+    engine = pyttsx3.init()
+    rate = engine.getProperty('rate')
+    engine.setProperty('rate', rate - 50)
+    engine.setProperty("volume", 1.0)
+    engine.say(text)
+    engine.runAndWait()
 
 def get_audio():
     r = sr.Recognizer()
     with sr.Microphone() as source:
+        print("Speak:")
         audio = r.listen(source)
         said = ""
-
         try:
             said = r.recognize_google(audio)
             print(said)
         except Exception as e:
-            print("Exception: " + str(e))
-            print("Sorry, I could not understand what you said.")
+            #print("Exception: " + str(e))
+            speak("Sorry, I could not understand what you said.")
 
-        return said
+        return said.lower()
 
 def check(sentence, words):
     res = [all([k in s for k in words]) for s in sentence]
@@ -109,10 +106,17 @@ def getEventsfromGoogle(day, service): #n is amount of events
     events = events_result.get('items', [])
 
     if not events:
-        print('No upcoming events found.')
-    for event in events:
-        start = event['start'].get('dateTime', event['start'].get('date'))
-        print(start, event['summary'])
+        speak('You can book on this date, do you want to proceed?')
+
+        if text.lower() == "yes":
+            speak("Your booking has successfully written.")
+
+    else:
+        speak(f"Sorry, we don't have room for that day, do you want something else?")
+
+def writeEventsonGoogleCalendar():
+
+    return
 
 def get_date(text):
     text = text.lower()
@@ -159,26 +163,90 @@ def get_date(text):
 
     return datetime.date(month = month, day = day, year = year)
 
+def note(text):
+    date = datetime.datetime.now()
+    file_name = str(date).replace(":", "-") + "-note.txt"
+    with open(file_name, "w") as f:
+        f.write(text)
+
+    subprocess.Popen(["notepad.exe", file_name])
+
+
+nlp = spacy.load('en_core_web_sm')
+doc = []
+list_of_words = []
+
+words = ['Do','Have','Which','What', 'Do']
+no_interest = ['nothing', 'none']
+
+def welcome_menu():
+    customer_speech = get_audio()
+
+    if "single" in customer_speech:
+        speak("Good decision. So for what days would you like to book a room?")
+        return "single"
+    elif "double" in customer_speech:
+        speak("Let me have a look. For which days would you like to book a room?")
+        return "double"
+    elif any(word in customer_speech for word in no_interest):
+        speak("Thank you contacting us. We hope to see you soon.")
+
+order_preference = welcome_menu()
+
+def TakeReservationfromUser():
+    global list_of_words
+    list_of_words = []
+    doc = nlp(text)
+    spacy.displacy.render(doc, style='dep', jupyter=True)
+
+    for possible_subject in doc:
+        print("doc --", possible_subject.pos_)
+        if((possible_subject.pos_ == 'NOUN' or possible_subject.pos_ == 'PROPN') and possible_subject.text.title() in ALLDAYSANDMONTHS):
+            list_of_words.append(possible_subject.text.title())
+
+        if(len(list_of_words) == 0):
+            for word in doc:
+                if(word.text.title() in words):
+                    list_of_words.append(word.text.title())
+                    break
+        if(len(list_of_words) == 0):
+            for word in doc:
+                list_of_words.append(word.text.title())
+                break
+        list_of_words = list(set(list_of_words))
+        print("Days ", list_of_words)
+
+        return doc
+
+CALENDAR_STRS = ["do", "have", "which", "what"]
+NOTE_STRS = ["book", "register"]
+
 SERVICE = googleAuthentication()
-text = get_audio()
-getEventsfromGoogle(get_date(text), SERVICE)
+print("START")
+
+while True:
+    text = get_audio()
+    for phrase in CALENDAR_STRS:
+        if phrase in text.lower():
+            date = get_date(text)
+            if date:
+                getEventsfromGoogle(get_date(text), SERVICE)
+            else:
+                speak("Sorry, I didn't understand what you have said. Could you please repeat?")
+
+    for phrase in NOTE_STRS:
+        if phrase in NOTE_STRS:
+            if phrase in text.lower():
+                speak("What would you like me to write down?")
+                note_text = get_audio().lower()
+                note(note_text)
+                speak("I have made a note of that.")
+
+    if "name" in text.split():
+        speak("My name is Alice and I'm here to help you with booking.")
 
 
-# TALKTOHER = "hey"
-# while True:
-#     text = get_audio()
-#
-#     if text.count(TALKTOHER) > 0:
-#         speak("Hello, how may I help you today?")
-#         text = get_audio()
-#
-#         if "hello" in text.split():
-#             speak("hello, how are you?")
-#
-#         if "name" in text.split():
-#             speak("My name is Alice and I'm here to help you with booking.")
-#
-#
-#         if "Malta" in text.split():
-#             speak("Yes. She absolutely needs to sleep now. Nijat cares for her.")
-#         os.remove('voice.mp3')
+
+
+
+
